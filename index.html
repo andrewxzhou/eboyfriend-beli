@@ -124,6 +124,26 @@
   details ol { margin: 4px 0 12px; padding-left: 22px; }
   details li { padding: 3px 0; }
   .toolbar { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+
+  /* Manage screen */
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .field input, .field select {
+    font: inherit; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card); color: var(--ink); width: 100%;
+  }
+  .field input:focus, .field select:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  .addbox { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; box-shadow: var(--shadow); margin-bottom: 18px; }
+  .addbox h3 { margin: 0 0 12px; font-size: 16px; }
+  .mrow {
+    display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 12px; background: var(--card); margin-bottom: 7px;
+  }
+  .mrow .mname { flex: 1; font-weight: 600; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrow select { font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: #faf4ef; color: var(--ink); max-width: 130px; }
+  .mrow .del { border: none; background: #fff0eb; color: var(--accent); border-radius: 8px; padding: 6px 9px; font-weight: 800; cursor: pointer; font-size: 13px; }
+  .mcat { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 7px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 4px 0 0; }
 </style>
 </head>
 <body>
@@ -252,7 +272,24 @@ function buildState(data) {
     pointers: {},           // cat -> index of next restaurant to surface
     overallResult: [],      // final names, best first
     comparisons: 0,
+    // edit-phase (re-placing an added / re-categorized restaurant):
+    editQueue: [],          // [{name,cat}] items still needing placement
+    editItem: null,         // {name,cat} currently being placed
+    editStage: "category",  // "category" then (if already finished) "overall"
+    editLo: 0, editHi: 0,
+    returnPhase: "done",    // phase to resume once the edit queue drains
   };
+}
+
+// Older saved states won't have the edit-phase fields; add them in place.
+function migrate(s) {
+  if (s.editQueue === undefined) s.editQueue = [];
+  if (s.editItem === undefined) s.editItem = null;
+  if (s.editStage === undefined) s.editStage = "category";
+  if (s.editLo === undefined) s.editLo = 0;
+  if (s.editHi === undefined) s.editHi = 0;
+  if (s.returnPhase === undefined) s.returnPhase = "done";
+  return s;
 }
 
 function save() {
@@ -267,7 +304,7 @@ function loadSaved(sig) {
     if (!raw) return null;
     const obj = JSON.parse(raw);
     if (obj.sig !== sig) return null;   // CSV changed -> ignore stale progress
-    return obj.state;
+    return migrate(obj.state);
   } catch (e) { return null; }
 }
 
@@ -355,9 +392,59 @@ function ensureComparison() {
       };
     }
 
+    if (state.phase === "edit") {
+      if (state.editItem === null) {
+        if (state.editQueue.length === 0) {                 // queue drained: resume
+          if (state.returnPhase === "overall") { initOverall(); }
+          else {
+            state.phase = state.returnPhase;
+            if (state.phase === "category") recomputeCatIndex();
+          }
+          continue;
+        }
+        state.editItem = state.editQueue.shift();
+        state.editStage = "category";
+        const list = state.sorted[state.editItem.cat];
+        state.editLo = 0; state.editHi = list.length;
+        if (list.length === 0) { list.push(state.editItem.name); editAdvance(); continue; }
+      }
+      const list = state.editStage === "category"
+        ? state.sorted[state.editItem.cat] : state.overallResult;
+      if (state.editLo >= state.editHi) {                   // position found
+        list.splice(state.editLo, 0, state.editItem.name);
+        if (state.editStage === "category") editAdvance();
+        else state.editItem = null;
+        continue;
+      }
+      const mid = (state.editLo + state.editHi) >> 1;
+      return {
+        type: "edit", stage: state.editStage,
+        a: { name: state.editItem.name, category: state.editItem.cat },
+        b: state.editStage === "category"
+          ? { name: list[mid], category: state.editItem.cat }
+          : { name: list[mid], category: catOf(list[mid]) },
+      };
+    }
+
     return null; // done
   }
   return null;
+}
+
+// After an item is binary-inserted into its category, decide whether it also
+// needs placing in the finished overall list (only when we're returning to the
+// "done" screen — otherwise the overall ranking gets (re)built from scratch).
+function editAdvance() {
+  if (state.returnPhase === "done") {
+    state.editStage = "overall";
+    state.editLo = 0; state.editHi = state.overallResult.length;
+    if (state.overallResult.length === 0) {
+      state.overallResult.push(state.editItem.name);
+      state.editItem = null;
+    }
+  } else {
+    state.editItem = null;
+  }
 }
 
 function initOverall() {
@@ -366,12 +453,28 @@ function initOverall() {
   state.leaderboard = [];
   state.ovQueue = [];
   state.ovInsert = null;
+  state.overallResult = [];
   for (const cat of state.categoryOrder) {
     state.pointers[cat] = 0;
     if (state.sorted[cat].length > 0) {
       state.ovQueue.push({ cat, item: state.sorted[cat][0] });
     }
   }
+}
+
+// Which category does a given restaurant name currently live in?
+function catOf(name) {
+  for (const c of state.categoryOrder) if (state.sorted[c].includes(name)) return c;
+  return "";
+}
+
+// When returning to Phase 1, point catIndex at the first category that still
+// has unplaced restaurants so the normal flow picks up where it should.
+function recomputeCatIndex() {
+  for (let i = 0; i < state.categoryOrder.length; i++) {
+    if (state.remaining[state.categoryOrder[i]].length > 0) { state.catIndex = i; return; }
+  }
+  state.catIndex = state.categoryOrder.length;   // nothing left -> roll into overall
 }
 
 // User picked: preferA === true means the new item (a) beats the existing (b).
@@ -384,7 +487,116 @@ function choose(preferA) {
   } else if (state.phase === "overall") {
     const mid = (state.ovLo + state.ovHi) >> 1;
     if (preferA) state.ovHi = mid; else state.ovLo = mid + 1;
+  } else if (state.phase === "edit") {
+    const mid = (state.editLo + state.editHi) >> 1;
+    if (preferA) state.editHi = mid; else state.editLo = mid + 1;
   }
+  save();
+  render();
+}
+
+/* ---------------------- Add / move / remove edits ---------------------- */
+/*
+  Mutations re-use the same binary-insertion the ranker already does, via a
+  small "edit" phase. The within-category sorted lists are the source of truth
+  and are never destroyed by the overall merge, so:
+    - removing just splices out of the category (and the finished overall list);
+    - adding / re-categorizing queues the name to be binary-inserted into its
+      (new) category — and, if the overall ranking is already finished, into
+      the overall list too. If we're still mid-merge, we simply rebuild Phase 2
+      (cheap: category sorts are intact).
+*/
+
+// Snapshot of the current phase to come back to after edits are placed.
+function currentReturnPhase() {
+  if (state.phase === "edit") return state.returnPhase;   // already editing: keep target
+  if (state.phase === "done") return "done";
+  if (state.phase === "category") return "category";
+  // Mid-overall-merge: discard partial merge progress and rebuild it afterwards.
+  return "overall";
+}
+
+// Normalize away any in-progress binary search before mutating lists, so an
+// edit triggered mid-comparison can't corrupt a half-placed item. In-flight
+// items are returned to a queue to be re-placed cleanly.
+function flushInflight() {
+  if (state.insertItem !== null) {
+    const cat = state.categoryOrder[state.catIndex];
+    if (cat !== undefined) state.remaining[cat].unshift(state.insertItem);
+    state.insertItem = null;
+  }
+  if (state.editItem !== null) {
+    if (state.editStage === "overall") {
+      // Already inserted into its category this round; pull it back out so the
+      // re-placement starts from the category stage again.
+      const i = state.sorted[state.editItem.cat].indexOf(state.editItem.name);
+      if (i >= 0) state.sorted[state.editItem.cat].splice(i, 1);
+    }
+    state.editQueue.unshift(state.editItem);
+    state.editItem = null;
+  }
+}
+
+function removeRestaurant(name) {
+  snapshot();
+  flushInflight();
+  for (const c of state.categoryOrder) {
+    const i = state.sorted[c].indexOf(name);
+    if (i >= 0) state.sorted[c].splice(i, 1);
+    const j = state.remaining[c].indexOf(name);
+    if (j >= 0) state.remaining[c].splice(j, 1);
+  }
+  const k = state.overallResult.indexOf(name);
+  if (k >= 0) state.overallResult.splice(k, 1);
+  state.editQueue = state.editQueue.filter(e => e.name !== name);
+  // If a merge was in progress it now references stale data — rebuild it.
+  if (state.phase === "overall") initOverall();
+  save();
+  render();
+}
+
+function ensureCategory(cat) {
+  if (!state.categoryOrder.includes(cat)) {
+    state.categoryOrder.push(cat);
+    state.sorted[cat] = [];
+    state.remaining[cat] = [];
+    state.pointers[cat] = 0;
+  }
+}
+
+// Queue a restaurant for (re-)placement into `cat`. Used by both add and move.
+function placeIntoCategory(name, cat) {
+  snapshot();
+  flushInflight();
+  ensureCategory(cat);
+
+  // Remove any existing copy first (move = remove + add).
+  for (const c of state.categoryOrder) {
+    const i = state.sorted[c].indexOf(name); if (i >= 0) state.sorted[c].splice(i, 1);
+    const j = state.remaining[c].indexOf(name); if (j >= 0) state.remaining[c].splice(j, 1);
+  }
+  const k = state.overallResult.indexOf(name); if (k >= 0) state.overallResult.splice(k, 1);
+  state.editQueue = state.editQueue.filter(e => e.name !== name);
+
+  const back = currentReturnPhase();
+
+  // If this category hasn't been sorted yet (still in Phase 1 and not reached),
+  // just drop it in the to-do pile; the normal flow will rank it.
+  const catPos = state.categoryOrder.indexOf(cat);
+  const catUnsorted = state.phase === "category" && catPos >= state.catIndex;
+  if (catUnsorted) {
+    state.remaining[cat].push(name);
+    if (state.phase === "overall") initOverall();
+    save();
+    render();
+    return;
+  }
+
+  // Otherwise binary-insert it via the edit phase.
+  state.returnPhase = back;
+  state.editQueue.push({ name, cat });
+  state.phase = "edit";
+  state.editItem = null;
   save();
   render();
 }
@@ -401,12 +613,16 @@ function placedInCategoryPhase() {
   return state.categoryOrder.reduce((n, c) => n + state.sorted[c].length, 0);
 }
 
+let manageOpen = false;   // is the manage overlay showing?
+
 function render() {
+  if (manageOpen) { renderManage(); return; }
   const cmp = ensureComparison();
   save();
   if (cmp === null) { renderResults(); return; }
   if (cmp.type === "category") renderCategory(cmp);
-  else renderOverall(cmp);
+  else if (cmp.type === "overall") renderOverall(cmp);
+  else renderEdit(cmp);
 }
 
 function escapeHtml(s) {
@@ -419,7 +635,10 @@ function header(phaseLabel, sub, pct) {
   <header>
     <div class="titlerow">
       <div class="brand">Tiered Taste<span class="dot">.</span></div>
-      <button class="iconbtn" onclick="resetAll()">Reset</button>
+      <div style="display:flex;gap:8px">
+        <button class="iconbtn" onclick="openManage()">＋ Manage</button>
+        <button class="iconbtn" onclick="resetAll()">Reset</button>
+      </div>
     </div>
     <div class="phaselabel">${escapeHtml(phaseLabel)}</div>
     <div class="sublabel">${sub}</div>
@@ -463,6 +682,28 @@ function renderCategory(cmp) {
         ${cardHtml(cmp.a, "a", false)}
         <div class="vs">VS</div>
         ${cardHtml(cmp.b, "b", false)}
+      </div>
+    </main>` +
+    footerHtml();
+}
+
+function renderEdit(cmp) {
+  const stageLabel = cmp.stage === "category"
+    ? `Placing in <strong style="color:var(--ink)">${escapeHtml(cmp.a.category)}</strong>`
+    : `Placing in your <strong style="color:var(--ink)">overall</strong> ranking`;
+  const left = state.editQueue.length + (cmp.stage === "category" ? 0 : 0);
+  app.innerHTML =
+    header(
+      "Placing new restaurant",
+      `${stageLabel}${left ? ` · ${left} more queued` : ""}`,
+      100
+    ) +
+    `<main>
+      <div class="prompt">Which is better?</div>
+      <div class="cards">
+        ${cardHtml(cmp.a, "a", cmp.stage === "overall")}
+        <div class="vs">VS</div>
+        ${cardHtml(cmp.b, "b", cmp.stage === "overall")}
       </div>
     </main>` +
     footerHtml();
@@ -512,7 +753,10 @@ function renderResults() {
     <header>
       <div class="titlerow">
         <div class="brand">Tiered Taste<span class="dot">.</span></div>
-        <button class="iconbtn" onclick="resetAll()">Restart</button>
+        <div style="display:flex;gap:8px">
+          <button class="iconbtn" onclick="openManage()">＋ Manage</button>
+          <button class="iconbtn" onclick="resetAll()">Restart</button>
+        </div>
       </div>
     </header>
     <main class="results" style="display:block">
@@ -548,6 +792,136 @@ function resetAll() {
   undoStack = [];
   state = buildState(window.__DATA__);
   render();
+}
+
+/* ----------------------------- Manage screen --------------------------- */
+
+function openManage() { manageOpen = true; render(); }
+function closeManage() { manageOpen = false; render(); }
+
+const NEW_CAT = " new";   // sentinel for the "new category" option
+
+function catOptions(selected) {
+  const opts = state.categoryOrder.map(c =>
+    `<option value="${escapeHtml(c)}"${c === selected ? " selected" : ""}>${escapeHtml(c)}</option>`).join("");
+  return opts + `<option value="${NEW_CAT}">+ New category…</option>`;
+}
+
+// All restaurants currently known, grouped by category (placed first, then any
+// still-unranked items waiting in `remaining`).
+function allByCategory() {
+  return state.categoryOrder.map(c => ({
+    cat: c,
+    names: [...state.sorted[c], ...state.remaining[c].filter(n => !state.sorted[c].includes(n))],
+  })).filter(g => g.names.length);
+}
+
+function renderManage() {
+  const groups = allByCategory();
+  const total = groups.reduce((n, g) => n + g.names.length, 0);
+  const list = groups.map(g => `
+    <div class="mcat">${escapeHtml(g.cat)} (${g.names.length})</div>
+    ${g.names.map(n => `
+      <div class="mrow">
+        <span class="mname">${escapeHtml(n)}</span>
+        <select onchange="onMoveSelect(this, ${JSON.stringify(n).replace(/"/g, "&quot;")})">
+          ${catOptions(g.cat)}
+        </select>
+        <button class="del" title="Remove" onclick="onRemove(${JSON.stringify(n).replace(/"/g, "&quot;")})">✕</button>
+      </div>`).join("")}
+  `).join("");
+
+  app.innerHTML = `
+    <header>
+      <div class="titlerow">
+        <div class="brand">Tiered Taste<span class="dot">.</span></div>
+        <button class="iconbtn" onclick="closeManage()">✓ Done</button>
+      </div>
+      <div class="phaselabel">Manage restaurants</div>
+      <div class="sublabel">${total} restaurant${total === 1 ? "" : "s"} · ${groups.length} categories</div>
+    </header>
+    <main style="display:block">
+      <div class="addbox">
+        <h3>Add a restaurant</h3>
+        <div class="field">
+          <label for="addName">Name</label>
+          <input id="addName" type="text" placeholder="e.g. joes pizza" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="addCat">Category</label>
+          <select id="addCat" onchange="onAddCatChange(this)">
+            ${catOptions(state.categoryOrder[0] || NEW_CAT)}
+          </select>
+        </div>
+        <div class="field" id="newCatField" style="display:none">
+          <label for="newCat">New category name</label>
+          <input id="newCat" type="text" placeholder="e.g. Pizza" autocomplete="off" />
+        </div>
+        <button class="primary" style="width:100%" onclick="onAdd()">Add &amp; rank it</button>
+        <p class="hint">It'll be slotted into the category with a few quick comparisons, then (if your overall ranking is done) into the overall list too.</p>
+      </div>
+
+      <div class="mcat" style="margin-top:4px">All restaurants</div>
+      <p class="hint" style="margin-bottom:6px">Use the dropdown to move a restaurant to another category, or ✕ to remove it. Moving re-ranks it in the new category.</p>
+      ${list || '<p class="hint">No restaurants yet — add one above.</p>'}
+      <div style="height:20px"></div>
+    </main>`;
+
+  // If "new category" was the only option, reveal the field.
+  if (!state.categoryOrder.length) onAddCatChange(document.getElementById("addCat"));
+}
+
+function onAddCatChange(sel) {
+  document.getElementById("newCatField").style.display = sel.value === NEW_CAT ? "flex" : "none";
+}
+
+function resolveCat(selValue, newCatInputId) {
+  if (selValue === NEW_CAT) {
+    const v = (document.getElementById(newCatInputId)?.value || "").trim();
+    return v;
+  }
+  return selValue;
+}
+
+function nameExists(name) {
+  const low = name.toLowerCase();
+  for (const c of state.categoryOrder) {
+    if (state.sorted[c].some(n => n.toLowerCase() === low)) return true;
+    if (state.remaining[c].some(n => n.toLowerCase() === low)) return true;
+  }
+  return false;
+}
+
+function onAdd() {
+  const name = (document.getElementById("addName").value || "").trim();
+  const cat = resolveCat(document.getElementById("addCat").value, "newCat");
+  if (!name) { alert("Please enter a restaurant name."); return; }
+  if (!cat) { alert("Please enter a category name."); return; }
+  if (nameExists(name)) { alert(`"${name}" is already in your list. Use the move dropdown to recategorize it.`); return; }
+  manageOpen = false;
+  placeIntoCategory(name, cat);   // enters edit phase / queues for Phase 1
+}
+
+function onMoveSelect(sel, name) {
+  const target = sel.value;
+  if (target === NEW_CAT) {
+    const nc = (prompt(`Move "${name}" to which new category?`) || "").trim();
+    if (!nc) { renderManage(); return; }          // cancelled -> reset the select
+    if (catOf(name) === nc) { renderManage(); return; }
+    manageOpen = false;
+    placeIntoCategory(name, nc);
+    return;
+  }
+  if (target === catOf(name)) return;             // no change
+  manageOpen = false;
+  placeIntoCategory(name, target);
+}
+
+function onRemove(name) {
+  if (!confirm(`Remove "${name}" from your rankings?`)) return;
+  removeRestaurant(name);
+  if (state.phase === "edit") manageOpen = false; // shouldn't happen, but be safe
+  renderManage();
 }
 
 /* ------------------------------ Bootstrap ------------------------------ */
