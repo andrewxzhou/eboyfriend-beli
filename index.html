@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#ff5a3c" />
+<title>Tiered Taste — Rank Your Restaurants</title>
+<style>
+  :root {
+    --bg: #fff7f3;
+    --card: #ffffff;
+    --ink: #2b2118;
+    --muted: #8a7d72;
+    --accent: #ff5a3c;
+    --accent-2: #ffb347;
+    --line: #f0e3da;
+    --good: #2fb673;
+    --shadow: 0 8px 30px rgba(255, 90, 60, 0.10), 0 2px 8px rgba(0,0,0,0.04);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: none;
+  }
+  .app {
+    width: 100%;
+    max-width: 540px;
+    margin: 0 auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  /* Header */
+  header { padding: 6px 2px 12px; }
+  .titlerow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .brand { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+  .brand .dot { color: var(--accent); }
+  .iconbtn {
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+    border-radius: 10px; padding: 7px 11px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .iconbtn:active { transform: scale(0.96); }
+  .phaselabel { margin-top: 12px; font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+  .sublabel { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .bar { height: 8px; background: var(--line); border-radius: 999px; margin-top: 12px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 999px; transition: width 0.35s ease; }
+
+  /* Main */
+  main { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .prompt { text-align: center; font-size: 15px; color: var(--muted); margin: 8px 0 4px; }
+  .prompt strong { color: var(--ink); }
+
+  .cards { display: flex; flex-direction: column; gap: 14px; margin: 10px 0; }
+  .card {
+    position: relative;
+    background: var(--card);
+    border: 2px solid var(--line);
+    border-radius: 20px;
+    padding: 26px 20px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    text-align: center;
+    transition: transform 0.08s ease, border-color 0.15s ease;
+    min-height: 104px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    user-select: none;
+  }
+  .card:active { transform: scale(0.98); border-color: var(--accent); }
+  @media (hover: hover) { .card:hover { border-color: var(--accent); } }
+  .card .name { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.15; }
+  .badge {
+    display: inline-block; font-size: 12px; font-weight: 700; color: var(--accent);
+    background: #fff0eb; border-radius: 999px; padding: 4px 12px; letter-spacing: 0.02em;
+  }
+  .vs {
+    text-align: center; font-weight: 800; color: var(--muted); font-size: 13px;
+    letter-spacing: 0.15em; margin: -2px 0;
+  }
+
+  .tie {
+    margin: 6px auto 0; display: block; background: transparent; border: none;
+    color: var(--muted); font-size: 13px; font-weight: 600; text-decoration: underline;
+    cursor: pointer; padding: 8px;
+  }
+
+  footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; }
+  .ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .ghost:disabled { opacity: 0.4; cursor: default; }
+  .count { font-size: 12px; color: var(--muted); }
+
+  /* Loader / chooser */
+  .center-screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 14px; padding: 20px; }
+  .center-screen p { color: var(--muted); margin: 0; line-height: 1.5; }
+  .primary { background: var(--accent); color: #fff; border: none; border-radius: 12px; padding: 13px 22px; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: var(--shadow); }
+  .primary:active { transform: scale(0.97); }
+  code.cmd { background: #2b2118; color: #ffd9cf; padding: 8px 12px; border-radius: 8px; font-size: 13px; display: inline-block; }
+
+  /* Results */
+  .results h2 { font-size: 22px; margin: 4px 0 2px; letter-spacing: -0.02em; }
+  .rank-list { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .rank-item {
+    display: flex; align-items: center; gap: 12px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow);
+  }
+  .rank-num { font-weight: 800; font-size: 16px; min-width: 26px; text-align: center; color: var(--accent); }
+  .top3 .rank-num { color: #fff; background: var(--accent); border-radius: 8px; padding: 2px 0; }
+  .rank-name { font-weight: 700; flex: 1; }
+  .rank-cat { font-size: 11px; font-weight: 700; color: var(--muted); background: #f7efe9; border-radius: 999px; padding: 3px 9px; }
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin-top: 10px; padding: 4px 14px; }
+  summary { cursor: pointer; font-weight: 700; padding: 10px 0; }
+  details ol { margin: 4px 0 12px; padding-left: 22px; }
+  details li { padding: 3px 0; }
+  .toolbar { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+"use strict";
+
+const STORE_KEY = "tiered-taste-v1";
+const app = document.getElementById("app");
+
+/* ----------------------------- CSV loading ----------------------------- */
+
+function parseCSV(text) {
+  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim().length);
+  const rows = lines.map(line => {
+    // minimal CSV: handles optional double-quoted fields
+    const out = []; let cur = ""; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (q) {
+        if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') q = false;
+        else cur += c;
+      } else {
+        if (c === '"') q = true;
+        else if (c === ",") { out.push(cur); cur = ""; }
+        else cur += c;
+      }
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  });
+  const header = rows[0].map(h => (h || "").trim());
+  const lower = header.map(h => h.toLowerCase());
+  const nameIdx = lower.findIndex(h => /name|restaurant|place|spot/.test(h));
+  const catIdx = lower.findIndex(h => /categ|genre|type|cuisine/.test(h));
+
+  // "Long" format: one row per restaurant, with a name column and a category
+  // column. Only treat it this way if there's a real name column AND the table
+  // is narrow — otherwise it's the wide matrix below.
+  if (nameIdx >= 0 && catIdx >= 0 && nameIdx !== catIdx && header.length <= 4) {
+    return rows.slice(1)
+      .filter(r => (r[nameIdx] || "").trim())
+      .map(r => ({ name: r[nameIdx].trim(), category: (r[catIdx] || "Uncategorized").trim() }));
+  }
+
+  // "Wide" matrix format: each header cell is a category, and the cells down
+  // that column are the restaurants in it. Empty/label columns (e.g. a leading
+  // "Category" column with no entries) are skipped automatically.
+  const META_COL = /^(category|total|totals|count|counts|sum|notes?|comments?|#|rank|score)\b|total restaurants/i;
+  const out = [];
+  for (let j = 0; j < header.length; j++) {
+    const cat = header[j];
+    if (!cat || META_COL.test(cat)) continue;   // skip label/summary columns
+    const items = [];
+    for (let i = 1; i < rows.length; i++) {
+      const v = (rows[i][j] || "").trim();
+      if (v) items.push(v);
+    }
+    if (!items.length) continue;                 // skip empty columns
+    for (const name of items) out.push({ name, category: cat });
+  }
+  return out;
+}
+
+// Try a few likely filenames so the app works whether the CSV keeps its
+// Google-Sheets export name or gets renamed to something tidier.
+const CSV_CANDIDATES = [
+  "restaurants.csv",
+  "mergesorting - Sheet1.csv",
+  "data.csv",
+];
+
+async function loadData() {
+  for (const fname of CSV_CANDIDATES) {
+    try {
+      const res = await fetch(encodeURI(fname), { cache: "no-store" });
+      if (res.ok) {
+        const data = parseCSV(await res.text());
+        if (data.length) return data;
+      }
+    } catch (e) { /* try next; or fall through to picker on file:// */ }
+  }
+  return null;
+}
+
+/* --------------------------- State management -------------------------- */
+/*
+  The entire ranking process is a serializable state machine so that progress
+  survives a page refresh (persisted to localStorage). We never rely on an
+  async call stack — every decision is recoverable from `state`.
+
+  Lists are sorted BEST -> WORST (index 0 == best).
+*/
+
+let state = null;
+let dataSig = "";          // signature of the loaded CSV, to detect changes
+let undoStack = [];        // in-memory snapshots for the Back button
+
+function signature(data) {
+  return data.map(d => d.category + "|" + d.name).sort().join("~");
+}
+
+function buildState(data) {
+  const categoryOrder = [];
+  const groups = {};
+  for (const r of data) {
+    if (!groups[r.category]) { groups[r.category] = []; categoryOrder.push(r.category); }
+    groups[r.category].push(r.name);
+  }
+  const sorted = {}, remaining = {};
+  for (const c of categoryOrder) { sorted[c] = []; remaining[c] = groups[c].slice(); }
+  return {
+    phase: "category",
+    categoryOrder,
+    sorted,
+    remaining,
+    catIndex: 0,
+    // category-phase insertion in progress:
+    insertItem: null, lo: 0, hi: 0,
+    // overall-phase (k-way merge of sorted category heads):
+    ovQueue: [],            // {cat,item} heads waiting to enter the leaderboard
+    ovInsert: null, ovLo: 0, ovHi: 0,
+    leaderboard: [],        // {cat,item} current top option of each live category, best first
+    pointers: {},           // cat -> index of next restaurant to surface
+    overallResult: [],      // final names, best first
+    comparisons: 0,
+  };
+}
+
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ sig: dataSig, state }));
+  } catch (e) {}
+}
+
+function loadSaved(sig) {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (obj.sig !== sig) return null;   // CSV changed -> ignore stale progress
+    return obj.state;
+  } catch (e) { return null; }
+}
+
+function snapshot() {
+  undoStack.push(JSON.stringify(state));
+  if (undoStack.length > 200) undoStack.shift();
+}
+
+function undo() {
+  if (!undoStack.length) return;
+  state = JSON.parse(undoStack.pop());
+  save();
+  render();
+}
+
+/* --------------------------- The core engine --------------------------- */
+/*
+  ensureComparison() advances the machine through all the automatic steps
+  (placing the first item of a list, popping the merge leaderboard, switching
+  categories, finishing) until it either needs a human comparison or is done.
+
+  It returns the comparison to show the user, or null when ranking is complete.
+  `a` is always the NEW item being placed; `b` is the existing item it's
+  measured against. Choosing `a` means "a is better than b".
+*/
+function ensureComparison() {
+  let guard = 0;
+  while (guard++ < 100000) {
+    if (state.phase === "category") {
+      const cat = state.categoryOrder[state.catIndex];
+      if (cat === undefined) { initOverall(); continue; }      // all categories done
+      const sorted = state.sorted[cat];
+      const remaining = state.remaining[cat];
+
+      if (state.insertItem === null) {
+        if (remaining.length === 0) { state.catIndex++; continue; }   // next category
+        state.insertItem = remaining.shift();
+        if (sorted.length === 0) { sorted.push(state.insertItem); state.insertItem = null; continue; }
+        state.lo = 0; state.hi = sorted.length;
+      }
+      if (state.lo >= state.hi) {                               // position found
+        sorted.splice(state.lo, 0, state.insertItem);
+        state.insertItem = null;
+        continue;
+      }
+      const mid = (state.lo + state.hi) >> 1;
+      return {
+        type: "category", cat,
+        a: { name: state.insertItem, category: cat },
+        b: { name: sorted[mid], category: cat },
+        already: sorted.length,
+      };
+    }
+
+    if (state.phase === "overall") {
+      if (state.ovInsert === null) {
+        if (state.ovQueue.length > 0) {
+          state.ovInsert = state.ovQueue.shift();
+          state.ovLo = 0; state.ovHi = state.leaderboard.length;
+          if (state.leaderboard.length === 0) {
+            state.leaderboard.push(state.ovInsert); state.ovInsert = null; continue;
+          }
+        } else {
+          // Extraction: the best current head becomes the next overall pick.
+          if (state.leaderboard.length === 0) { state.phase = "done"; return null; }
+          const best = state.leaderboard.shift();
+          state.overallResult.push(best.item);
+          state.pointers[best.cat]++;
+          const nextIdx = state.pointers[best.cat];
+          if (nextIdx < state.sorted[best.cat].length) {
+            state.ovQueue.push({ cat: best.cat, item: state.sorted[best.cat][nextIdx] });
+          }
+          continue;
+        }
+      }
+      if (state.ovLo >= state.ovHi) {
+        state.leaderboard.splice(state.ovLo, 0, state.ovInsert);
+        state.ovInsert = null; continue;
+      }
+      const mid = (state.ovLo + state.ovHi) >> 1;
+      return {
+        type: "overall",
+        a: { name: state.ovInsert.item, category: state.ovInsert.cat },
+        b: { name: state.leaderboard[mid].item, category: state.leaderboard[mid].cat },
+      };
+    }
+
+    return null; // done
+  }
+  return null;
+}
+
+function initOverall() {
+  state.phase = "overall";
+  state.pointers = {};
+  state.leaderboard = [];
+  state.ovQueue = [];
+  state.ovInsert = null;
+  for (const cat of state.categoryOrder) {
+    state.pointers[cat] = 0;
+    if (state.sorted[cat].length > 0) {
+      state.ovQueue.push({ cat, item: state.sorted[cat][0] });
+    }
+  }
+}
+
+// User picked: preferA === true means the new item (a) beats the existing (b).
+function choose(preferA) {
+  snapshot();
+  state.comparisons++;
+  if (state.phase === "category") {
+    const mid = (state.lo + state.hi) >> 1;
+    if (preferA) state.hi = mid; else state.lo = mid + 1;
+  } else if (state.phase === "overall") {
+    const mid = (state.ovLo + state.ovHi) >> 1;
+    if (preferA) state.ovHi = mid; else state.ovLo = mid + 1;
+  }
+  save();
+  render();
+}
+
+/* ------------------------------ Rendering ------------------------------ */
+
+function totalItems() {
+  return state.categoryOrder.reduce((n, c) =>
+    n + state.sorted[c].length + state.remaining[c].length +
+    (state.insertItem !== null && state.categoryOrder[state.catIndex] === c ? 1 : 0), 0);
+}
+
+function placedInCategoryPhase() {
+  return state.categoryOrder.reduce((n, c) => n + state.sorted[c].length, 0);
+}
+
+function render() {
+  const cmp = ensureComparison();
+  save();
+  if (cmp === null) { renderResults(); return; }
+  if (cmp.type === "category") renderCategory(cmp);
+  else renderOverall(cmp);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function header(phaseLabel, sub, pct) {
+  return `
+  <header>
+    <div class="titlerow">
+      <div class="brand">Tiered Taste<span class="dot">.</span></div>
+      <button class="iconbtn" onclick="resetAll()">Reset</button>
+    </div>
+    <div class="phaselabel">${escapeHtml(phaseLabel)}</div>
+    <div class="sublabel">${sub}</div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+  </header>`;
+}
+
+function cardHtml(item, side, showCat) {
+  const badge = showCat ? `<span class="badge">${escapeHtml(item.category)}</span>` : "";
+  return `
+    <div class="card" onclick="choose(${side === 'a'})">
+      ${badge}
+      <span class="name">${escapeHtml(item.name)}</span>
+    </div>`;
+}
+
+function footerHtml() {
+  return `
+  <footer>
+    <button class="ghost" onclick="undo()" ${undoStack.length ? "" : "disabled"}>↩ Back</button>
+    <span class="count">${state.comparisons} comparison${state.comparisons === 1 ? "" : "s"}</span>
+  </footer>`;
+}
+
+function renderCategory(cmp) {
+  const total = totalItems();
+  const placed = placedInCategoryPhase();
+  const pct = total ? Math.round((placed / total) * 50) : 0;  // phase 1 owns first 50%
+  const catCount = state.sorted[cmp.cat].length + state.remaining[cmp.cat].length +
+                   (state.insertItem !== null ? 1 : 0);
+  const ranking = state.sorted[cmp.cat].length + 1;
+  app.innerHTML =
+    header(
+      "Phase 1 of 2 · Sorting categories",
+      `<strong style="color:var(--ink)">${escapeHtml(cmp.cat)}</strong> — placing #${ranking} of ${catCount}`,
+      pct
+    ) +
+    `<main>
+      <div class="prompt">Which is better?</div>
+      <div class="cards">
+        ${cardHtml(cmp.a, "a", false)}
+        <div class="vs">VS</div>
+        ${cardHtml(cmp.b, "b", false)}
+      </div>
+    </main>` +
+    footerHtml();
+}
+
+function renderOverall(cmp) {
+  const grandTotal = state.categoryOrder.reduce((n, c) => n + state.sorted[c].length, 0);
+  const done = state.overallResult.length;
+  const pct = 50 + (grandTotal ? Math.round((done / grandTotal) * 50) : 0);
+  app.innerHTML =
+    header(
+      "Phase 2 of 2 · Overall ranking",
+      `Comparing category leaders — ${done} of ${grandTotal} ranked`,
+      pct
+    ) +
+    `<main>
+      <div class="prompt">Across <strong>everything</strong>, which is better?</div>
+      <div class="cards">
+        ${cardHtml(cmp.a, "a", true)}
+        <div class="vs">VS</div>
+        ${cardHtml(cmp.b, "b", true)}
+      </div>
+    </main>` +
+    footerHtml();
+}
+
+function renderResults() {
+  save();
+  const items = state.overallResult.map((name, i) => {
+    let cat = "";
+    for (const c of state.categoryOrder) if (state.sorted[c].includes(name)) { cat = c; break; }
+    const top = i < 3 ? " top3" : "";
+    return `<li class="rank-item${top}">
+      <span class="rank-num">${i + 1}</span>
+      <span class="rank-name">${escapeHtml(name)}</span>
+      <span class="rank-cat">${escapeHtml(cat)}</span>
+    </li>`;
+  }).join("");
+
+  const perCat = state.categoryOrder.map(c => `
+    <details>
+      <summary>${escapeHtml(c)} <span style="color:var(--muted);font-weight:600">(${state.sorted[c].length})</span></summary>
+      <ol>${state.sorted[c].map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ol>
+    </details>`).join("");
+
+  app.innerHTML = `
+    <header>
+      <div class="titlerow">
+        <div class="brand">Tiered Taste<span class="dot">.</span></div>
+        <button class="iconbtn" onclick="resetAll()">Restart</button>
+      </div>
+    </header>
+    <main class="results" style="display:block">
+      <h2>🏆 Your Overall Ranking</h2>
+      <div class="sublabel">${state.overallResult.length} restaurants · ${state.comparisons} comparisons made</div>
+      <ol class="rank-list" style="counter-reset:none">${items}</ol>
+      <h2 style="font-size:18px;margin-top:22px">By category</h2>
+      ${perCat}
+      <div class="toolbar">
+        <button class="primary" onclick="copyResults()">Copy results</button>
+        <button class="ghost" onclick="resetAll()">Start over</button>
+      </div>
+    </main>`;
+}
+
+function copyResults() {
+  let txt = "Overall ranking:\n";
+  state.overallResult.forEach((n, i) => { txt += `${i + 1}. ${n}\n`; });
+  txt += "\nBy category:\n";
+  for (const c of state.categoryOrder) {
+    txt += `\n${c}:\n`;
+    state.sorted[c].forEach((n, i) => { txt += `  ${i + 1}. ${n}\n`; });
+  }
+  navigator.clipboard?.writeText(txt).then(
+    () => alert("Results copied to clipboard!"),
+    () => alert(txt)
+  );
+}
+
+function resetAll() {
+  if (!confirm("Start over? Your current ranking will be lost.")) return;
+  localStorage.removeItem(STORE_KEY);
+  undoStack = [];
+  state = buildState(window.__DATA__);
+  render();
+}
+
+/* ------------------------------ Bootstrap ------------------------------ */
+
+function startWith(data) {
+  window.__DATA__ = data;
+  dataSig = signature(data);
+  const saved = loadSaved(dataSig);
+  state = saved || buildState(data);
+  render();
+}
+
+function renderFilePicker() {
+  app.innerHTML = `
+    <div class="center-screen">
+      <div class="brand" style="font-size:26px">Tiered Taste<span class="dot">.</span></div>
+      <p>Couldn't auto-load <code>restaurants.csv</code> (this happens when the page is opened directly as a file).</p>
+      <p><strong>Best:</strong> run a tiny local server, then reload:</p>
+      <code class="cmd">python3 -m http.server 8000</code>
+      <p>then open <strong>http://localhost:8000</strong></p>
+      <p style="margin-top:8px">Or just pick the CSV file:</p>
+      <input type="file" id="picker" accept=".csv,text/csv" />
+    </div>`;
+  document.getElementById("picker").addEventListener("change", ev => {
+    const f = ev.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = parseCSV(reader.result);
+      if (data.length) startWith(data);
+      else alert("Could not read any restaurants from that file.");
+    };
+    reader.readAsText(f);
+  });
+}
+
+(async function () {
+  const data = await loadData();
+  if (data) startWith(data);
+  else renderFilePicker();
+})();
+</script>
+</body>
+</html>
