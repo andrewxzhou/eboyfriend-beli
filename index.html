@@ -144,6 +144,18 @@
   .mrow .del { border: none; background: #fff0eb; color: var(--accent); border-radius: 8px; padding: 6px 9px; font-weight: 800; cursor: pointer; font-size: 13px; }
   .mcat { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 16px 0 7px; }
   .hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 4px 0 0; }
+  .saved { color: var(--good); font-weight: 700; }
+
+  /* Toast */
+  .toast {
+    position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(8px);
+    background: #2b2118; color: #fff; padding: 11px 18px; border-radius: 12px;
+    font-size: 13px; font-weight: 600; box-shadow: var(--shadow); z-index: 80;
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease; pointer-events: none;
+    max-width: 90vw; text-align: center;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -306,6 +318,83 @@ function loadSaved(sig) {
     if (obj.sig !== sig) return null;   // CSV changed -> ignore stale progress
     return migrate(obj.state);
   } catch (e) { return null; }
+}
+
+/* ----------------------- Portable save / load -------------------------- */
+/*
+  Progress already auto-saves to this browser's localStorage on every tap.
+  These let you ALSO keep a save file you can stash anywhere or carry to another
+  device/browser. The exported state captures the exact point — even mid-
+  comparison — so importing resumes precisely where you left off.
+*/
+
+// Reconstruct the {name,category} dataset from a state object, so an imported
+// save's "Start over" and labels work even if the CSV differs.
+function dataFromState(s) {
+  const seen = new Set(), out = [];
+  const add = (name, cat) => { if (!seen.has(name)) { seen.add(name); out.push({ name, category: cat }); } };
+  for (const c of s.categoryOrder) {
+    (s.sorted[c] || []).forEach(n => add(n, c));
+    (s.remaining[c] || []).forEach(n => add(n, c));
+  }
+  (s.editQueue || []).forEach(e => add(e.name, e.cat));
+  if (s.editItem) add(s.editItem.name, s.editItem.cat);
+  return out;
+}
+
+function exportProgress() {
+  const payload = {
+    app: "tiered-taste", version: 1,
+    savedAt: new Date().toISOString(),
+    sig: dataSig,
+    state,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `tiered-taste-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  flash("Saved to your downloads ✓");
+}
+
+function importProgress(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let obj;
+    try { obj = JSON.parse(reader.result); }
+    catch (e) { alert("That file isn't a valid Tiered Taste save."); return; }
+    // Accept either the wrapped payload or a bare state object.
+    const st = obj && obj.state ? obj.state : obj;
+    if (!st || !st.categoryOrder || !st.sorted || typeof st.phase !== "string") {
+      alert("That file isn't a valid Tiered Taste save."); return;
+    }
+    if (!confirm("Load this saved ranking? It will replace your current progress in this browser.")) return;
+    state = migrate(st);
+    window.__DATA__ = dataFromState(state);
+    if (!dataSig) dataSig = obj.sig || signature(window.__DATA__);
+    undoStack = [];
+    manageOpen = false;
+    save();
+    render();
+    flash("Saved ranking loaded ✓");
+  };
+  reader.readAsText(file);
+}
+
+let toastTimer = null;
+function flash(msg) {
+  let t = document.getElementById("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.className = "toast"; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
 function snapshot() {
@@ -659,7 +748,7 @@ function footerHtml() {
   return `
   <footer>
     <button class="ghost" onclick="undo()" ${undoStack.length ? "" : "disabled"}>↩ Back</button>
-    <span class="count">${state.comparisons} comparison${state.comparisons === 1 ? "" : "s"}</span>
+    <span class="count">${state.comparisons} comparison${state.comparisons === 1 ? "" : "s"} · <span class="saved">auto-saved ✓</span></span>
   </footer>`;
 }
 
@@ -842,6 +931,17 @@ function renderManage() {
     </header>
     <main style="display:block">
       <div class="addbox">
+        <h3>💾 Save your progress</h3>
+        <p class="hint" style="margin:0 0 12px">Your progress is <span class="saved">saved automatically</span> in this browser. To keep a backup or continue on another device, download a save file — then load it here anytime.</p>
+        <div class="toolbar" style="margin:0">
+          <button class="primary" onclick="exportProgress()">Download save file</button>
+          <button class="ghost" onclick="document.getElementById('importFile').click()">Load a save file</button>
+        </div>
+        <input id="importFile" type="file" accept=".json,application/json" style="display:none"
+               onchange="importProgress(this.files[0])" />
+      </div>
+
+      <div class="addbox">
         <h3>Add a restaurant</h3>
         <div class="field">
           <label for="addName">Name</label>
@@ -944,6 +1044,8 @@ function renderFilePicker() {
       <p>then open <strong>http://localhost:8000</strong></p>
       <p style="margin-top:8px">Or just pick the CSV file:</p>
       <input type="file" id="picker" accept=".csv,text/csv" />
+      <p style="margin-top:14px">Resuming on a new device? Load a save file:</p>
+      <input type="file" id="resume" accept=".json,application/json" />
     </div>`;
   document.getElementById("picker").addEventListener("change", ev => {
     const f = ev.target.files[0];
@@ -955,6 +1057,9 @@ function renderFilePicker() {
       else alert("Could not read any restaurants from that file.");
     };
     reader.readAsText(f);
+  });
+  document.getElementById("resume").addEventListener("change", ev => {
+    importProgress(ev.target.files[0]);
   });
 }
 
